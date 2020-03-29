@@ -190,6 +190,8 @@ def _run(handle_data,
             trading_calendar=trading_calendar,
             capital_base=capital_base,
             data_frequency=data_frequency,
+            # fix for minute perf
+            emission_rate=data_frequency
         ),
         metrics_set=metrics_set,
         blotter=blotter,

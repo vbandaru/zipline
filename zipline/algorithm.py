@@ -564,16 +564,21 @@ class TradingAlgorithm(object):
         if sim_params is not None:
             self.sim_params = sim_params
 
+        # minute perf change order
+        if not self.initialized:
+            self.initialize(**self.initialize_kwargs)
+            self.initialized = True
+
+
         self.metrics_tracker = metrics_tracker = self._create_metrics_tracker()
 
         # Set the dt initially to the period start by forcing it to change.
         self.on_dt_changed(self.sim_params.start_session)
 
-        if not self.initialized:
-            self.initialize(**self.initialize_kwargs)
-            self.initialized = True
 
-        benchmark_source = self._create_benchmark_source()
+        # fix comment benchmark for minute perf
+        # benchmark_source = self._create_benchmark_source()
+        benchmark_source = None
 
         self.trading_client = AlgorithmSimulator(
             self,
@@ -639,15 +644,23 @@ class TradingAlgorithm(object):
             for perf in self.get_generator():
                 perfs.append(perf)
 
+            stats = None
             # convert perf dict to pandas dataframe
-            daily_stats = self._create_daily_stats(perfs)
+            if self.sim_params.data_frequency == 'daily':
+                stats = self._create_daily_stats(perfs)
+            if self.sim_params.data_frequency == 'minute':
+                stats = self._create_minute_stats(perfs)
+                # print("perfs in before _create_minute_stats:\n",perfs)
+                # print("minute_stats after _create_minute_stats:\n",minute_stats)
+                print("=========================================================================\n")
 
-            self.analyze(daily_stats)
+            self.analyze(stats)
+
         finally:
             self.data_portal = None
             self.metrics_tracker = None
 
-        return daily_stats
+        return stats
 
     def _create_daily_stats(self, perfs):
         # create daily and cumulative stats dataframe
@@ -671,6 +684,42 @@ class TradingAlgorithm(object):
         )
         daily_stats = pd.DataFrame(daily_perfs, index=daily_dts)
         return daily_stats
+
+    def _create_minute_stats(self, perfs):
+        # create minute and cumulative stats dataframe
+        minute_perfs = []
+        workDayStrList = self.trading_calendar.day.weekmask.split(" ")
+        # TODO: the loop here could overwrite expected properties
+        # of minute_perf. Could potentially raise or log a
+        # warning.
+        # perfDF = pd.DataFrame(perfs)
+        # print("daily stats perfs are:\n",perfDF.head(),"\n...\n",perfDF.tail())
+
+        for idx, perf in enumerate(perfs):
+            # print("index[ ",idx," ] perf is:")
+            # for p in perf:
+            #     print(p," = ",perf[p])
+            # print("\n")
+            if 'minute_perf' in perf:
+                perf['minute_perf'].update(
+                    perf['minute_perf'].pop('recorded_vars')
+                )
+                perf['minute_perf'].update(perf['cumulative_risk_metrics'])
+
+                daytime = perf['period_start'].strftime("%a")
+                # Only analyze day is in the CustomBusinessDay of our calenday.
+                if (daytime in workDayStrList):
+                    minute_perfs.append(perf['minute_perf'])
+            else:
+                self.risk_report = perf
+
+        minute_dts = pd.DatetimeIndex(
+            [p['period_close'] for p in minute_perfs], tz='UTC'
+        )
+
+        minute_stats = pd.DataFrame(minute_perfs, index=minute_dts)
+
+        return minute_stats
 
     def calculate_capital_changes(self, dt, emission_rate, is_interday,
                                   portfolio_value_adjustment=0.0):
